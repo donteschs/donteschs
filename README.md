@@ -63,6 +63,24 @@ npm run dev
 
 Frontend runs on `http://localhost:5173`.
 
+
+## YouTube OAuth Setup
+
+Create a `.env` file in `backend/` with:
+
+```env
+YT_CLIENT_ID=your_google_client_id
+YT_CLIENT_SECRET=your_google_client_secret
+YT_REDIRECT_URI=http://localhost:8000/auth/youtube/callback
+FRONTEND_URL=http://localhost:5173
+```
+
+Available endpoints:
+
+- `GET /auth/youtube/start` → returns `{ "auth_url": ... }`
+- `GET /auth/youtube/callback?code=...&state=...` → stores OAuth tokens and redirects to `/settings?youtube=connected` on the frontend
+- `GET /youtube/channel` → returns `subscribers`, `views`, and `video_count` for the connected account
+
 ## API Notes
 
 - `/auth/register` and `/auth/login` are active with SQLite user storage.

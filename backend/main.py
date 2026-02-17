@@ -1,9 +1,13 @@
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database.db import Base, engine
 from routers.analytics import router as analytics_router
 from routers.auth import router as auth_router
+from routers.youtube import router as youtube_router
+
+load_dotenv()
 
 Base.metadata.create_all(bind=engine)
 
@@ -19,6 +23,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(analytics_router)
+app.include_router(youtube_router)
 
 
 @app.get("/")
