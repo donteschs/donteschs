@@ -79,7 +79,7 @@ Available endpoints:
 
 - `GET /auth/youtube/start` → returns `{ "auth_url": ... }`
 - `GET /auth/youtube/callback?code=...&state=...` → stores OAuth tokens and redirects to `/settings?youtube=connected` on the frontend
-- `GET /youtube/channel` → returns `subscribers`, `views`, and `video_count` for the connected account
+- `GET /youtube/channel` → returns `subscriberCount`, `viewCount`, and `videoCount` for the connected account
 
 ## API Notes
 
