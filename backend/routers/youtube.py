@@ -119,9 +119,9 @@ def youtube_channel_metrics():
 
         statistics = items[0].get("statistics", {})
         return {
-            "subscribers": int(statistics.get("subscriberCount", 0)),
-            "views": int(statistics.get("viewCount", 0)),
-            "video_count": int(statistics.get("videoCount", 0)),
+            "subscriberCount": int(statistics.get("subscriberCount", 0)),
+            "viewCount": int(statistics.get("viewCount", 0)),
+            "videoCount": int(statistics.get("videoCount", 0)),
         }
     except HTTPException:
         raise
