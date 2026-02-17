@@ -1,12 +1,17 @@
 import os
-from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from sqlalchemy.orm import Session
+
+from database.db import get_db
+from models.user import User
+from models.youtube_credential import YouTubeCredential
+from services.auth import get_current_user
 
 load_dotenv()
 
@@ -18,8 +23,8 @@ YOUTUBE_SCOPES = [
 ]
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 
-# In-memory token storage (can be replaced by SQLite persistence later)
-youtube_tokens: dict[str, Any] = {}
+# Temporary OAuth state mapping (tokens are persisted in SQLite)
+oauth_state_to_user_id: dict[str, int] = {}
 
 
 def _get_google_client_config() -> dict[str, dict[str, str]]:
@@ -47,7 +52,7 @@ def _get_google_client_config() -> dict[str, dict[str, str]]:
 
 
 @router.get("/auth/youtube/start")
-def youtube_oauth_start():
+def youtube_oauth_start(current_user: User = Depends(get_current_user)):
     flow = Flow.from_client_config(
         _get_google_client_config(),
         scopes=YOUTUBE_SCOPES,
@@ -58,14 +63,21 @@ def youtube_oauth_start():
         include_granted_scopes="true",
         prompt="consent",
     )
-    youtube_tokens["oauth_state"] = state
+    oauth_state_to_user_id[state] = current_user.id
     return {"auth_url": auth_url}
 
 
 @router.get("/auth/youtube/callback")
-def youtube_oauth_callback(code: str = Query(...), state: str | None = Query(default=None)):
-    saved_state = youtube_tokens.get("oauth_state")
-    if saved_state and state and saved_state != state:
+def youtube_oauth_callback(
+    code: str = Query(...),
+    state: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    if not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth state")
+
+    user_id = oauth_state_to_user_id.pop(state, None)
+    if not user_id:
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
 
     flow = Flow.from_client_config(
@@ -81,12 +93,27 @@ def youtube_oauth_callback(code: str = Query(...), state: str | None = Query(def
         raise HTTPException(status_code=400, detail=f"OAuth token exchange failed: {exc}") from exc
 
     credentials = flow.credentials
-    youtube_tokens["access_token"] = credentials.token
-    youtube_tokens["refresh_token"] = credentials.refresh_token
-    youtube_tokens["token_uri"] = credentials.token_uri or TOKEN_URI
-    youtube_tokens["client_id"] = credentials.client_id or os.getenv("YT_CLIENT_ID")
-    youtube_tokens["client_secret"] = credentials.client_secret or os.getenv("YT_CLIENT_SECRET")
-    youtube_tokens["scopes"] = list(credentials.scopes or YOUTUBE_SCOPES)
+
+    credential = db.query(YouTubeCredential).filter(YouTubeCredential.user_id == user_id).first()
+    scopes = " ".join(credentials.scopes or YOUTUBE_SCOPES)
+
+    if not credential:
+        credential = YouTubeCredential(
+            user_id=user_id,
+            access_token=credentials.token,
+            refresh_token=credentials.refresh_token,
+            token_uri=credentials.token_uri or TOKEN_URI,
+            scopes=scopes,
+        )
+        db.add(credential)
+    else:
+        credential.access_token = credentials.token
+        if credentials.refresh_token:
+            credential.refresh_token = credentials.refresh_token
+        credential.token_uri = credentials.token_uri or TOKEN_URI
+        credential.scopes = scopes
+
+    db.commit()
 
     frontend_url = os.getenv("FRONTEND_URL")
     if not frontend_url:
@@ -96,19 +123,22 @@ def youtube_oauth_callback(code: str = Query(...), state: str | None = Query(def
 
 
 @router.get("/youtube/channel")
-def youtube_channel_metrics():
-    access_token = youtube_tokens.get("access_token")
-    if not access_token:
+def youtube_channel_metrics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    credential = db.query(YouTubeCredential).filter(YouTubeCredential.user_id == current_user.id).first()
+    if not credential:
         raise HTTPException(status_code=401, detail="YouTube account not connected")
 
     try:
         creds = Credentials(
-            token=access_token,
-            refresh_token=youtube_tokens.get("refresh_token"),
-            token_uri=youtube_tokens.get("token_uri", TOKEN_URI),
-            client_id=youtube_tokens.get("client_id"),
-            client_secret=youtube_tokens.get("client_secret"),
-            scopes=youtube_tokens.get("scopes", YOUTUBE_SCOPES),
+            token=credential.access_token,
+            refresh_token=credential.refresh_token,
+            token_uri=credential.token_uri,
+            client_id=os.getenv("YT_CLIENT_ID"),
+            client_secret=os.getenv("YT_CLIENT_SECRET"),
+            scopes=credential.scopes.split(),
         )
         youtube = build("youtube", "v3", credentials=creds)
 
